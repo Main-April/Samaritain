@@ -492,15 +492,24 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
     env.backends.onnx.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
   }
-  // Qwen2.5-0.5B par défaut partout (choix utilisateur). Sur iPhone 11 (4 Go RAM,
-  // mono-thread), un reload Safari reste possible en fin de chargement (heap WASM
-  // > 500 Mo) ; SmolLM2-135M (~90 Mo) sert de secours si le chargement échoue.
+  // Qwen2.5-0.5B (~460 Mo, très bon français) reste le défaut sur desktop/tablette.
+  // Sur mobile (et surtout iPhone 11 : 4 Go RAM, WASM mono-thread), Qwen 0.5B fait
+  // monter le heap WASM au-dessus de ~500 Mo et déclenche un reload Safari en fin de
+  // chargement. On charge donc d'abord SmolLM2-360M (~260 Mo) — moins bon en français
+  // mais correct pour des réponses courtes — puis on retombe sur SmolLM2-135M (~90 Mo)
+  // si le chargement échoue.
   const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
-  const MODEL_CHAIN = [
-    "onnx-community/Qwen2.5-0.5B-Instruct-ONNX",
-    "onnx-community/SmolLM2-135M-Instruct-ONNX"
-  ];
+  const MODEL_CHAIN = IS_MOBILE
+    ? [
+        "onnx-community/SmolLM2-360M-Instruct-ONNX",
+        "onnx-community/SmolLM2-135M-Instruct-ONNX"
+      ]
+    : [
+        "onnx-community/Qwen2.5-0.5B-Instruct-ONNX",
+        "onnx-community/SmolLM2-360M-Instruct-ONNX",
+        "onnx-community/SmolLM2-135M-Instruct-ONNX"
+      ];
   const DTYPE        = "q4f16";
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS   = 30;
