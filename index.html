@@ -306,7 +306,14 @@
     pointer-events: none;
   }
   @media (max-width: 820px) {
-    #boot-log { display: none; }
+    #boot-log {
+      left: calc(13% + 10px);
+      right: calc(13% + 10px);
+      top: 6px;
+      height: 38%;
+      max-height: 38%;
+      font-size: clamp(0.32em, 1.8vw, 0.42em);
+    }
   }
   #boot-log .boot-line {
     display: block;
@@ -467,13 +474,14 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
     env.backends.onnx.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
   }
-  // Modèle par défaut : Qwen2.5-0.5B (q4f16, 460 Mo, meilleur français sur cette
-  // machine). Le q4 pèse 786 Mo : impossible à allouer dans le heap WASM (7,8 Go RAM).
-  // En dernier recours (téléchargement) : SmolLM2-135M.
-  const MODEL_CHAIN  = [
-    "onnx-community/Qwen2.5-0.5B-Instruct-ONNX",
-    "onnx-community/SmolLM2-135M-Instruct-ONNX"
-  ];
+  // Mobile : sur iPhone (4 Go RAM, Safari mono-thread), le Qwen 0.5B fait recharger
+  // la page en fin de chargement (pression mémoire du heap WASM > 500 Mo). On bascule
+  // sur SmolLM2-135M (~90 Mo) pour rester sous le seuil mémoire. Desktop garde Qwen.
+  const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
+  const MODEL_CHAIN = IS_MOBILE
+    ? ["onnx-community/SmolLM2-135M-Instruct-ONNX"]
+    : ["onnx-community/Qwen2.5-0.5B-Instruct-ONNX", "onnx-community/SmolLM2-135M-Instruct-ONNX"];
   const DTYPE        = "q4f16";
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS = 30;
