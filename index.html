@@ -492,12 +492,6 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
     env.backends.onnx.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
   }
-  // Qwen2.5-0.5B (~460 Mo, très bon français) reste le défaut sur desktop/tablette.
-  // Sur mobile (choix utilisateur) : SmolLM2-360M en premier pour la qualité, avec
-  // SmolLM2-135M en secours si le chargement échoue. Attention : sur un petit iPhone
-  // (4 Go RAM), le 360M en WASM peut faire recharger Safari en fin de chargement ; si
-  // c'est le cas, on utilise le 135M à la place. Le WebGPU iOS (onnxruntime-web) est
-  // lui-même instable sur WebKit (bug ORT #26827 : refresh en boucle), donc WASM.
   const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
   const QWEN     = "onnx-community/Qwen2.5-0.5B-Instruct-ONNX";
