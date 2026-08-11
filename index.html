@@ -493,23 +493,37 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     env.backends.onnx.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
   }
   // Qwen2.5-0.5B (~460 Mo, très bon français) reste le défaut sur desktop/tablette.
-  // Sur mobile (et surtout iPhone 11 : 4 Go RAM, WASM mono-thread), Qwen 0.5B fait
-  // monter le heap WASM au-dessus de ~500 Mo et déclenche un reload Safari en fin de
-  // chargement. On charge donc d'abord SmolLM2-360M (~260 Mo) — moins bon en français
-  // mais correct pour des réponses courtes — puis on retombe sur SmolLM2-135M (~90 Mo)
-  // si le chargement échoue.
+  //
+  // Mobile : la limite, c'est le budget mémoire de Safari — le "reload" en fin de
+  // chargement = le processus WebKit est tué par iOS quand le heap WASM dépasse
+  // ~500-600 Mo. SmolLM2-360M (~272 Mo de fichier -> pic ~600 Mo) recharge donc sur un
+  // iPhone 11 (4 Go). SmolLM2-135M (~112 Mo de fichier -> pic ~250 Mo) est le plus gros
+  // modèle qui tient sans reload. Le WebGPU iOS (onnxruntime-web) est lui-même instable
+  // sur WebKit 26 (bug ORT #26827 : refresh en boucle), donc on reste en WASM.
+  //
+  // Ordre par appareil :
+  //  - Desktop / tablette   : Qwen 0.5B -> 360M -> 135M.
+  //  - iPhone / iPad        : 135M (360M ferait recharger Safari en fin de chargement).
+  //  - Android >= 6 Go RAM  : 360M -> 135M.
+  //  - Android < 6 Go       : 135M -> 360M.
   const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
-  const MODEL_CHAIN = IS_MOBILE
-    ? [
-        "onnx-community/SmolLM2-360M-Instruct-ONNX",
-        "onnx-community/SmolLM2-135M-Instruct-ONNX"
-      ]
-    : [
-        "onnx-community/Qwen2.5-0.5B-Instruct-ONNX",
-        "onnx-community/SmolLM2-360M-Instruct-ONNX",
-        "onnx-community/SmolLM2-135M-Instruct-ONNX"
-      ];
+  const IS_IOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const DEV_MEM = (navigator.deviceMemory && navigator.deviceMemory > 0) ? navigator.deviceMemory : 0;
+  const QWEN     = "onnx-community/Qwen2.5-0.5B-Instruct-ONNX";
+  const SMOL_360 = "onnx-community/SmolLM2-360M-Instruct-ONNX";
+  const SMOL_135 = "onnx-community/SmolLM2-135M-Instruct-ONNX";
+
+  let MODEL_CHAIN;
+  if (!IS_MOBILE) {
+    MODEL_CHAIN = [QWEN, SMOL_360, SMOL_135];
+  } else if (IS_IOS) {
+    MODEL_CHAIN = [SMOL_135, SMOL_360];
+  } else if (DEV_MEM >= 6) {
+    MODEL_CHAIN = [SMOL_360, SMOL_135];
+  } else {
+    MODEL_CHAIN = [SMOL_135, SMOL_360];
+  }
   const DTYPE        = "q4f16";
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS   = 30;
