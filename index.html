@@ -551,6 +551,9 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   let isLoading = false;
   let modelReady = false;
   let lastTranscript = "";
+  let audioPrimed = false;
+  let retryIndex = 0;
+  const RETRY_DELAYS = [300, 1000, 2000, 3500];
 
   modelNameEl.textContent = MODEL_CHAIN[0];
 
@@ -712,6 +715,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
       if (lastTranscript) {
         setText(lastTranscript);
+        retryIndex = 0;
         logDev("info", ["[stt] fin au résultat final"]);
         stopRec();
       } else {
@@ -746,14 +750,35 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
         setMode("");
         setText("");
         isBusy = false;
-        flashStatus("je n'ai rien entendu");
+        if (retryIndex < RETRY_DELAYS.length) {
+          const d = RETRY_DELAYS[retryIndex];
+          retryIndex++;
+          logDev("warn", ["[stt] rien entendu, retry dans " + d + " ms"]);
+          setTimeout(() => { startListening(true); }, d);
+        } else {
+          retryIndex = 0;
+          flashStatus("je n'ai rien entendu");
+        }
       }
     };
 
     return rec;
   }
 
-  function startListening() {
+  async function primeAudio() {
+    if (audioPrimed) return;
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(t => t.stop());
+      audioPrimed = true;
+      logDev("info", ["[stt] micro primé"]);
+    } catch (e) {
+      logDev("warn", ["[stt] prime micro refusée", e]);
+    }
+  }
+
+  async function startListening(auto = false) {
     if (isLoading) {
       flashStatus("modèle en cours de chargement");
       return;
@@ -763,9 +788,11 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       flashStatus("modèle non chargé");
       return;
     }
+    if (!auto) retryIndex = 0;
     if (!recognition) recognition = initRecognition();
     if (!recognition) return;
-    try { recognition.start(); } catch (e) {}
+    await primeAudio();
+    try { recognition.start(); } catch (e) { logDev("warn", ["[stt] start throw", e]); }
   }
 
   // ---------- LOADER (BOOT) ----------
