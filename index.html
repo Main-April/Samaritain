@@ -492,14 +492,15 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
     env.backends.onnx.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
   }
-  // Mobile : sur iPhone (4 Go RAM, Safari mono-thread), le Qwen 0.5B fait recharger
-  // la page en fin de chargement (pression mémoire du heap WASM > 500 Mo). On bascule
-  // sur SmolLM2-135M (~90 Mo) pour rester sous le seuil mémoire. Desktop garde Qwen.
+  // Qwen2.5-0.5B par défaut partout (choix utilisateur). Sur iPhone 11 (4 Go RAM,
+  // mono-thread), un reload Safari reste possible en fin de chargement (heap WASM
+  // > 500 Mo) ; SmolLM2-135M (~90 Mo) sert de secours si le chargement échoue.
   const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
-  const MODEL_CHAIN = IS_MOBILE
-    ? ["onnx-community/SmolLM2-135M-Instruct-ONNX"]
-    : ["onnx-community/Qwen2.5-0.5B-Instruct-ONNX", "onnx-community/SmolLM2-135M-Instruct-ONNX"];
+  const MODEL_CHAIN = [
+    "onnx-community/Qwen2.5-0.5B-Instruct-ONNX",
+    "onnx-community/SmolLM2-135M-Instruct-ONNX"
+  ];
   const DTYPE        = "q4f16";
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS   = 30;
@@ -768,11 +769,18 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   async function primeAudio() {
     if (audioPrimed) return;
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(t => t.stop());
-      audioPrimed = true;
-      logDev("info", ["[stt] micro primé"]);
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        audioPrimed = true;
+        return;
+      }
+      await Promise.race([
+        navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+          stream.getTracks().forEach(t => t.stop());
+          audioPrimed = true;
+          logDev("info", ["[stt] micro primé"]);
+        }),
+        sleep(1500)
+      ]);
     } catch (e) {
       logDev("warn", ["[stt] prime micro refusée", e]);
     }
@@ -780,11 +788,16 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
   async function startListening(auto = false) {
     if (isLoading) {
+      logDev("warn", ["[stt] bloqué: chargement en cours"]);
       flashStatus("modèle en cours de chargement");
       return;
     }
-    if (isBusy) return;
+    if (isBusy) {
+      logDev("warn", ["[stt] bloqué: occupation"]);
+      return;
+    }
     if (!modelReady || !generator) {
+      logDev("warn", ["[stt] bloqué: modèle non prêt"]);
       flashStatus("modèle non chargé");
       return;
     }
