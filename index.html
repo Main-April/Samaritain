@@ -209,6 +209,21 @@
     cursor: pointer;
   }
   #panel button:hover { background: #eee; }
+  #logView {
+    display: none;
+    margin-top: 8px;
+    max-height: 40vh;
+    overflow: auto;
+    background: #111;
+    color: #0f0;
+    font-family: "Courier New", monospace;
+    font-size: 0.55em;
+    line-height: 1.5;
+    padding: 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #logView.show { display: block; }
   @keyframes panelIn {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
@@ -438,6 +453,9 @@
     <h1>Samaritan // Réglages</h1>
     <p id="modelName"></p>
     <button id="reloadBtn">Recharger le modèle</button>
+    <button id="logBtn">Afficher le journal</button>
+    <div id="logView"></div>
+    <button id="copyLogBtn" style="display:none">Copier le journal</button>
   </div>
   <div id="status"><div class="label"></div></div>
 
@@ -484,9 +502,37 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     : ["onnx-community/Qwen2.5-0.5B-Instruct-ONNX", "onnx-community/SmolLM2-135M-Instruct-ONNX"];
   const DTYPE        = "q4f16";
   const LANG         = "fr-FR";
-  const MAX_NEW_TOKENS = 30;
+  const MAX_NEW_TOKENS   = 30;
+  const MOBILE_MAX_NEW_TOKENS = 20;
   const WORD_DELAY_MS = 300;
   const FADE_MS       = 120;
+
+  // ---------- JOURNAL ON-DEVICE (pas de console web sur mobile) ----------
+  const devLog = [];
+  function logDev(level, args) {
+    try {
+      const line = "[" + new Date().toISOString().slice(11, 19) + "] " + level + " " +
+        Array.from(args).map(a => {
+          if (a == null) return String(a);
+          if (typeof a === "object") {
+            const m = a.message != null ? a.message : (a.stack ? a.stack.split("\n")[0] : "");
+            return m || JSON.stringify(a).slice(0, 200);
+          }
+          return String(a);
+        }).join(" ");
+      devLog.push(line);
+      if (devLog.length > 300) devLog.shift();
+    } catch (e) {}
+  }
+  ["log", "warn", "error"].forEach(m => {
+    const orig = console[m].bind(console);
+    console[m] = function() {
+      try { logDev(m, arguments); } catch (e) {}
+      orig.apply(null, arguments);
+    };
+  });
+  window.addEventListener("error", (e) => { logDev("script", [e.message]); });
+  window.addEventListener("unhandledrejection", (e) => { logDev("rejection", [e.reason]); });
 
   // ---------- DOM ----------
   const textEl      = document.getElementById("text");
@@ -978,17 +1024,21 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       };
 
       try {
-        await stream({
-          max_new_tokens: MAX_NEW_TOKENS,
-          do_sample: true,
-          temperature: 0.5,
-          top_p: 0.95
-        });
+        if (IS_MOBILE) {
+          await stream({ max_new_tokens: MOBILE_MAX_NEW_TOKENS, do_sample: false });
+        } else {
+          await stream({
+            max_new_tokens: MAX_NEW_TOKENS,
+            do_sample: true,
+            temperature: 0.5,
+            top_p: 0.95
+          });
+        }
       } catch (e) {
-        console.warn("[gen] échec avec sampling, retry greedy :", e);
+        console.warn("[gen] échec, retry greedy :", e);
         output = "";
         setText("");
-        await stream({ max_new_tokens: MAX_NEW_TOKENS, do_sample: false });
+        await stream({ max_new_tokens: MOBILE_MAX_NEW_TOKENS, do_sample: false });
       }
 
       hideStatus();
@@ -1050,6 +1100,29 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     e.stopPropagation();
     closePanel();
     if (!isBusy) loadModel();
+  });
+
+  const logBtn = document.getElementById("logBtn");
+  const logView = document.getElementById("logView");
+  const copyLogBtn = document.getElementById("copyLogBtn");
+  let logShown = false;
+  logBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    logShown = !logShown;
+    logView.classList.toggle("show", logShown);
+    copyLogBtn.style.display = logShown ? "block" : "none";
+    if (logShown) {
+      logView.textContent = devLog.join("\n") || "aucune erreur enregistrée";
+      logView.scrollTop = logView.scrollHeight;
+    }
+  });
+  copyLogBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(logView.textContent || "");
+      }
+    } catch (err) {}
   });
 
   // ---------- INIT ----------
