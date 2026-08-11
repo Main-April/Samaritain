@@ -548,6 +548,9 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   let isBusy = false;
   let generator = null;
   let statusHideTimer = null;
+  let isLoading = false;
+  let modelReady = false;
+  let lastTranscript = "";
 
   modelNameEl.textContent = MODEL_CHAIN[0];
 
@@ -607,6 +610,12 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     }, 500);
   }
 
+  function flashStatus(txt, ms) {
+    showStatus(txt);
+    if (statusHideTimer) clearTimeout(statusHideTimer);
+    statusHideTimer = setTimeout(hideStatus, ms || 2500);
+  }
+
   function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
   function playWordAnim(cls) {
@@ -659,22 +668,34 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
     rec.onstart = () => {
       isBusy = true;
+      lastTranscript = "";
       setMode("listening");
       setText("");
+      logDev("info", ["[stt] start"]);
     };
 
     rec.onresult = (event) => {
-      setText(event.results[0][0].transcript.trim());
+      try {
+        lastTranscript = event.results[0][0].transcript.trim();
+        logDev("info", ["[stt] result=" + lastTranscript]);
+      } catch (e) {
+        logDev("warn", ["[stt] result absent", e]);
+      }
+      setText(lastTranscript);
     };
 
-    rec.onerror = () => {
+    rec.onerror = (e) => {
+      logDev("warn", ["[stt] error=" + (e && e.error)]);
       isBusy = false;
+      lastTranscript = "";
       setMode("");
       setText("");
     };
 
     rec.onend = async () => {
-      const transcript = textEl.textContent.trim();
+      const transcript = lastTranscript || textEl.textContent.trim();
+      lastTranscript = "";
+      logDev("info", ["[stt] onend transcript='" + transcript + "'"]);
       if (transcript) {
         await queryModel(transcript);
       } else {
@@ -688,7 +709,15 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   }
 
   function startListening() {
+    if (isLoading) {
+      flashStatus("modèle en cours de chargement");
+      return;
+    }
     if (isBusy) return;
+    if (!modelReady || !generator) {
+      flashStatus("modèle non chargé");
+      return;
+    }
     if (!recognition) recognition = initRecognition();
     if (!recognition) return;
     try { recognition.start(); } catch (e) {}
@@ -956,6 +985,8 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
   async function loadModel() {
     isBusy = true;
+    isLoading = true;
+    modelReady = false;
     setMode("thinking");
     setText("");
     bootLoader();
@@ -964,6 +995,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     let lastErr = null;
     let loadedModel = null;
     try {
+      logDev("info", ["[load] chain=" + MODEL_CHAIN.join(" / ")]);
       for (const modelId of MODEL_CHAIN) {
         for (const device of devices) {
           try {
@@ -982,19 +1014,24 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
         if (loadedModel) break;
       }
       if (!loadedModel) throw lastErr;
+      modelReady = true;
       modelNameEl.textContent = loadedModel;
+      logDev("info", ["[load] ok=" + loadedModel]);
       cancelProgress();
       setLoaderProgress(100);
       await finishLoader(true);
       setMode("");
       setText("");
     } catch (err) {
+      modelReady = false;
       console.error("[load] tous les modèles ont échoué :", err, err && err.stack);
+      logDev("error", ["[load] fail=" + describeError(err)]);
       cancelProgress();
       await finishLoader(false, err);
       setMode("");
     } finally {
       isBusy = false;
+      isLoading = false;
     }
   }
 
@@ -1002,6 +1039,15 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   async function queryModel(promptText) {
     setMode("thinking");
     setText("");
+    logDev("info", ["[gen] demande='" + promptText + "'"]);
+
+    if (!generator || !modelReady) {
+      flashStatus("modèle indisponible");
+      setMode("");
+      isBusy = false;
+      return;
+    }
+
     showThinkingStatus();
 
     try {
@@ -1036,6 +1082,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
         }
       } catch (e) {
         console.warn("[gen] échec, retry greedy :", e);
+        logDev("warn", ["[gen] retry greedy=" + describeError(e)]);
         output = "";
         setText("");
         await stream({ max_new_tokens: MOBILE_MAX_NEW_TOKENS, do_sample: false });
@@ -1044,6 +1091,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       hideStatus();
       setMode("");
       const full = output.trim();
+      logDev("info", ["[gen] réponse='" + full + "'"]);
       if (full) {
         await speakWords(full);
       } else {
@@ -1055,6 +1103,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       hideStatus();
       setMode("");
       console.error("[gen] échec de génération :", err, err && err.stack);
+      logDev("error", ["[gen] fail=" + describeError(err)]);
       showStatus("Erreur: " + describeError(err).slice(0, 48));
       await sleep(4000);
       hideStatus();
