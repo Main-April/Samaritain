@@ -965,22 +965,31 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       ];
 
       let output = "";
-      const streamer = new TextStreamer(generator.tokenizer, {
-        skip_prompt: true,
-        skip_special_tokens: true,
-        callback_function: (text) => {
-          output += text;
-          setText(output.trim());
-        }
-      });
+      const stream = (opts) => {
+        const streamer = new TextStreamer(generator.tokenizer, {
+          skip_prompt: true,
+          skip_special_tokens: true,
+          callback_function: (text) => {
+            output += text;
+            setText(output.trim());
+          }
+        });
+        return generator(Object.assign({ streamer }, opts));
+      };
 
-      await generator(messages, {
-        max_new_tokens: MAX_NEW_TOKENS,
-        do_sample: true,
-        temperature: 0.5,
-        top_p: 0.95,
-        streamer
-      });
+      try {
+        await stream({
+          max_new_tokens: MAX_NEW_TOKENS,
+          do_sample: true,
+          temperature: 0.5,
+          top_p: 0.95
+        });
+      } catch (e) {
+        console.warn("[gen] échec avec sampling, retry greedy :", e);
+        output = "";
+        setText("");
+        await stream({ max_new_tokens: MAX_NEW_TOKENS, do_sample: false });
+      }
 
       hideStatus();
       setMode("");
@@ -995,8 +1004,9 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     } catch (err) {
       hideStatus();
       setMode("");
-      showStatus("Erreur de génération");
-      await sleep(3000);
+      console.error("[gen] échec de génération :", err, err && err.stack);
+      showStatus("Erreur: " + describeError(err).slice(0, 48));
+      await sleep(4000);
       hideStatus();
     } finally {
       isBusy = false;
