@@ -1151,7 +1151,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
             setText(output.trim());
           }
         });
-        return generator(Object.assign({ streamer }, opts));
+        return generator(messages, Object.assign({ streamer }, opts));
       };
 
       try {
