@@ -663,8 +663,22 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     const rec = new SpeechRecognition();
     rec.lang = LANG;
     rec.continuous = false;
-    rec.interimResults = false;
+    rec.interimResults = true;
     rec.maxAlternatives = 1;
+
+    // iOS Safari peut rester "en écoute" indéfiniment sans finale résolu (ni onresult
+    // ni onend). On impose : fin au silence (~1,6 s) ou timeout absolu (~8 s), et on
+    // utilise les résultats intérimaires pour que la reconnaissance tourne jamais sans fin.
+    const SILENCE_MS = 1600;
+    const TOTAL_MS   = 8000;
+    let silenceTimer = null;
+    let totalTimer   = null;
+
+    function stopRec() {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+      if (totalTimer)   { clearTimeout(totalTimer);   totalTimer = null; }
+      try { rec.stop(); } catch (e) {}
+    }
 
     rec.onstart = () => {
       isBusy = true;
@@ -672,20 +686,48 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       setMode("listening");
       setText("");
       logDev("info", ["[stt] start"]);
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (totalTimer) clearTimeout(totalTimer);
+      totalTimer = setTimeout(() => {
+        logDev("warn", ["[stt] timeout total"]);
+        stopRec();
+      }, TOTAL_MS);
     };
 
     rec.onresult = (event) => {
+      let text = "";
       try {
-        lastTranscript = event.results[0][0].transcript.trim();
-        logDev("info", ["[stt] result=" + lastTranscript]);
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i];
+          if (res.isFinal) {
+            lastTranscript = res[0].transcript.trim();
+            logDev("info", ["[stt] final=" + lastTranscript]);
+          } else {
+            text += res[0].transcript;
+          }
+        }
       } catch (e) {
         logDev("warn", ["[stt] result absent", e]);
       }
-      setText(lastTranscript);
+
+      if (lastTranscript) {
+        setText(lastTranscript);
+        logDev("info", ["[stt] fin au résultat final"]);
+        stopRec();
+      } else {
+        text = text.trim();
+        if (text) setText(text);
+        if (silenceTimer) clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          logDev("info", ["[stt] fin par silence"]);
+          stopRec();
+        }, SILENCE_MS);
+      }
     };
 
     rec.onerror = (e) => {
       logDev("warn", ["[stt] error=" + (e && e.error)]);
+      stopRec();
       isBusy = false;
       lastTranscript = "";
       setMode("");
@@ -693,15 +735,18 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     };
 
     rec.onend = async () => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+      if (totalTimer) { clearTimeout(totalTimer); totalTimer = null; }
       const transcript = lastTranscript || textEl.textContent.trim();
       lastTranscript = "";
       logDev("info", ["[stt] onend transcript='" + transcript + "'"]);
       if (transcript) {
         await queryModel(transcript);
       } else {
-        isBusy = false;
         setMode("");
         setText("");
+        isBusy = false;
+        flashStatus("je n'ai rien entendu");
       }
     };
 
