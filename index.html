@@ -504,7 +504,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   const SMOL_360 = "onnx-community/SmolLM2-360M-Instruct-ONNX";
   const SMOL_135 = "onnx-community/SmolLM2-135M-Instruct-ONNX";
 
-  const MODEL_CHAIN = IS_MOBILE
+  let MODEL_CHAIN = IS_MOBILE
     ? [SMOL_360, SMOL_135]
     : [QWEN, SMOL_360, SMOL_135];
 
@@ -518,6 +518,17 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   const MOBILE_MAX_NEW_TOKENS = 20;
   const WORD_DELAY_MS = 300;
   const FADE_MS       = 120;
+
+  // ---------- ANTI-RELOAD (jetsam iOS/Android) ----------
+  // Le "reload" en fin de chargement = le navigateur tue l'onglet quand le heap WASM
+  // dépasse la limite RAM de l'appareil (pas un bug du code). On mémorise donc si un
+  // chargement est allé au bout : au boot suivant, un chargement encore marqué "en
+  // cours" dans localStorage signifie un crash/reload -> on repart sur un modèle plus
+  // léger (mode allégé) au lieu de re-boucler à l'infini.
+  const LRUN   = "sm_load_running";
+  const LCRASH = "sm_crash_count";
+  const LLOG   = "sm_crash_lastlog";
+  let safeChainActive = false;
 
   // ---------- JOURNAL ON-DEVICE (pas de console web sur mobile) ----------
   const devLog = [];
@@ -534,6 +545,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
         }).join(" ");
       devLog.push(line);
       if (devLog.length > 300) devLog.shift();
+      try { localStorage.setItem(LLOG, JSON.stringify(devLog.slice(-8))); } catch (e2) {}
     } catch (e) {}
   }
   ["log", "warn", "error"].forEach(m => {
@@ -1087,11 +1099,30 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     setText("");
     bootLoader();
     await requestPersistentStorage();
+
+    // Détection de reload : si LRUN est déjà présent, le chargement précédent n'est pas
+    // allé au bout (crash/jetsam pendant l'allocation WASM). On passe en mode allégé.
+    try {
+      if (localStorage.getItem(LRUN)) {
+        const n = (parseInt(localStorage.getItem(LCRASH) || "0", 10) || 0) + 1;
+        localStorage.setItem(LCRASH, String(n));
+        let prev = "";
+        try { prev = localStorage.getItem(LLOG) || ""; } catch (e2) {}
+        console.warn("[load] chargement précédent interrompu (crash n°" + n + ")" + (prev ? " | dernier log : " + prev : ""));
+        if (n >= 1) {
+          safeChainActive = true;
+          MODEL_CHAIN = IS_MOBILE ? [SMOL_135] : [QWEN, SMOL_135];
+        }
+      }
+      localStorage.setItem(LRUN, String(Date.now()));
+    } catch (e) {}
+    logDev("info", ["[load] chain=" + MODEL_CHAIN.join(" / ") + (safeChainActive ? " (mode allégé)" : "")]);
+    if (safeChainActive) flashStatus("modèle instable détecté : chargement allégé");
+
     const devices = (USE_WEBGPU && navigator.gpu) ? ["webgpu", "wasm"] : ["wasm"];
     let lastErr = null;
     let loadedModel = null;
     try {
-      logDev("info", ["[load] chain=" + MODEL_CHAIN.join(" / ")]);
       for (const modelId of MODEL_CHAIN) {
         for (const device of devices) {
           try {
@@ -1111,6 +1142,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       }
       if (!loadedModel) throw lastErr;
       modelReady = true;
+      try { localStorage.removeItem(LRUN); } catch (e) {}
       modelNameEl.textContent = loadedModel.split("/").pop() + " (" + DTYPE + ")";
       logDev("info", ["[load] ok=" + loadedModel]);
       cancelProgress();
