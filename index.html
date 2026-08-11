@@ -519,12 +519,17 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     MODEL_CHAIN = [QWEN, SMOL_360, SMOL_135];
   } else if (IS_IOS) {
     MODEL_CHAIN = [SMOL_135, SMOL_360];
-  } else if (DEV_MEM >= 6) {
+  } else if (DEV_MEM >= 8) {
     MODEL_CHAIN = [SMOL_360, SMOL_135];
   } else {
     MODEL_CHAIN = [SMOL_135, SMOL_360];
   }
-  const DTYPE        = "q4f16";
+
+  // dtype : "q8" (int8). Le "q4f16" embarque des tensors float16 que le backend WASM
+  // d'onnxruntime n'exécute PAS -> "OrtRun ERROR Unexpected input data type. actual
+  // tensor(float16), expected tensor(float)" en pleine génération. "q8" est le dtype
+  // par défaut conseillé pour WASM (aucun fp16) et fonctionne sur tous les navigateurs.
+  const DTYPE = "q8";
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS   = 30;
   const MOBILE_MAX_NEW_TOKENS = 20;
@@ -579,7 +584,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   let retryIndex = 0;
   const RETRY_DELAYS = [300, 1000, 2000, 3500];
 
-  modelNameEl.textContent = MODEL_CHAIN[0];
+  modelNameEl.textContent = MODEL_CHAIN[0].split("/").pop() + " (" + DTYPE + ")";
 
   // ---------- AFFICHAGE ----------
   function measureTextWidth(text) {
@@ -1123,7 +1128,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       }
       if (!loadedModel) throw lastErr;
       modelReady = true;
-      modelNameEl.textContent = loadedModel;
+      modelNameEl.textContent = loadedModel.split("/").pop() + " (" + DTYPE + ")";
       logDev("info", ["[load] ok=" + loadedModel]);
       cancelProgress();
       setLoaderProgress(100);
