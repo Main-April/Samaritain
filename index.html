@@ -87,7 +87,7 @@
     color: #fff;
   }
   #marker {
-    margin-top: 10px;
+    margin-top: 5px;
   }
   #triangle {
     color: #F00;
@@ -479,14 +479,26 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
 (() => {
   "use strict";
+
+  // ---------- CONFIG ----------
+  // Version GitHub Pages : modèle servi depuis le CDN Hugging Face (huggingface.co)
+  // et mis en cache dans le navigateur via la Cache API (persistant entre les visites).
+  // Le dossier local models/ (ONNX ~460 Mo) dépasse la limite GitHub de 100 Mo/fichier
+  // et ne peut donc pas être déployé : le premier chargement télécharge le modèle,
+  // les suivants sont servis depuis le cache.
   env.allowLocalModels = false;
   env.useBrowserCache = true;
   env.useFSCache = false;
   env.useCustomCache = false;
   const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
+  // navigator.deviceMemory n'est exposé que par Chrome/Android (pas Safari/iOS) ;
+  // on l'utilise en signal complémentaire, jamais comme seule condition.
   const LOW_MEM = !!(navigator.deviceMemory && navigator.deviceMemory <= 4);
   if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
+    // Sur mobile (ou mémoire faible), un seul thread WASM : le multi-thread expose
+    // certains navigateurs mobiles à des pics mémoire supplémentaires (buffers par
+    // thread) qui augmentent le risque de jetsam pendant le chargement.
     env.backends.onnx.wasm.numThreads = (IS_MOBILE || LOW_MEM)
       ? 1
       : Math.min(4, navigator.hardwareConcurrency || 1);
@@ -494,15 +506,35 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   const QWEN     = "onnx-community/Qwen2.5-0.5B-Instruct-ONNX";
   const SMOL_360 = "onnx-community/SmolLM2-360M-Instruct-ONNX";
   const SMOL_135 = "onnx-community/SmolLM2-135M-Instruct-ONNX";
+
+  // On tente désormais les "vrais" modèles sur mobile aussi (Qwen 0.5B / SmolLM 360M),
+  // grâce à la quantification q4 (poids int4) qui réduit fortement l'empreinte mémoire
+  // par rapport à q8. Le 135M reste en toute fin de chaîne, comme dernier recours.
   let MODEL_CHAIN = (IS_MOBILE || LOW_MEM)
     ? [QWEN, SMOL_360, SMOL_135]
     : [QWEN, SMOL_360, SMOL_135];
+
+  // dtype : on essaie "q4" en priorité (poids int4, activations déquantifiées à la
+  // volée via l'op MatMulNBits — supporté par le backend WASM d'onnxruntime-web dans
+  // les versions récentes embarquées par transformers@3.5.1), puis on retombe sur
+  // "q8" (int8) si "q4" n'existe pas pour ce repo ou échoue à l'exécution.
+  // IMPORTANT : ne JAMAIS utiliser "q4f16"/"fp16" — ces variantes embarquent des
+  // tensors float16 que le backend WASM n'exécute PAS -> "OrtRun ERROR Unexpected
+  // input data type. actual tensor(float16), expected tensor(float)" en pleine
+  // génération. q4 (sans f16) et q8 n'ont pas ce problème.
   const DTYPE_CHAIN = ["q4", "q8"];
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS   = 30;
   const MOBILE_MAX_NEW_TOKENS = 20;
   const WORD_DELAY_MS = 300;
   const FADE_MS       = 120;
+
+  // ---------- ANTI-RELOAD (jetsam iOS/Android) ----------
+  // Le "reload" en fin de chargement = le navigateur tue l'onglet quand le heap WASM
+  // dépasse la limite RAM de l'appareil (pas un bug du code). On mémorise donc si un
+  // chargement est allé au bout : au boot suivant, un chargement encore marqué "en
+  // cours" dans localStorage signifie un crash/reload -> on repart sur un modèle plus
+  // léger (mode allégé) au lieu de re-boucler à l'infini.
   const LRUN   = "sm_load_running";
   const LCRASH = "sm_crash_count";
   const LLOG   = "sm_crash_lastlog";
@@ -1090,15 +1122,17 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
         let prev = "";
         try { prev = localStorage.getItem(LLOG) || ""; } catch (e2) {}
         console.warn("[load] chargement précédent interrompu (crash n°" + n + ")" + (prev ? " | dernier log : " + prev : ""));
-        // 1er crash : on retire "q4" (peut peser plus en pic mémoire pendant la
-        // déquantification que prévu sur cet appareil) et on force q8 direct.
-        // 2e crash ou plus : mode allégé, on tombe directement sur le 135M en q8.
+        // On NE force plus q8 après un crash : q8 est plus lourd que q4 (poids non
+        // quantifiés en int4), donc forcer q8 est contre-productif et augmente le
+        // risque de re-crash. On garde toujours q4 en premier essai.
+        // Seul le nombre de modèles tentés se réduit avec les crashs répétés.
         if (n === 1) {
-          dtypeChain = ["q8"];
+          // 1er crash : on retire Qwen 0.5B de la chaîne (le plus gros), on garde
+          // SmolLM 360M en priorité avec q4 toujours en premier.
+          modelChain = [SMOL_360, SMOL_135];
         } else {
           safeChainActive = true;
           modelChain = [SMOL_135];
-          dtypeChain = ["q8"];
         }
       }
       localStorage.setItem(LRUN, String(Date.now()));
@@ -1126,6 +1160,15 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
             } catch (e) {
               lastErr = e;
               console.warn("[load] échec de " + modelId + " (" + dtype + ") sur " + device + " :", e);
+              // On libère explicitement les buffers de la tentative ratée avant
+              // d'en lancer une autre : sans ça, la mémoire WASM d'un échec partiel
+              // peut rester allouée et faire planter la tentative suivante, plus
+              // légère, pour une raison qui n'a rien à voir avec elle.
+              if (generator && typeof generator.dispose === "function") {
+                try { await generator.dispose(); } catch (e3) {}
+              }
+              generator = null;
+              if (typeof gc === "function") { try { gc(); } catch (e4) {} }
             }
           }
           if (loadedModel) break;
