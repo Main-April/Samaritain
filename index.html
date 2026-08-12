@@ -87,7 +87,7 @@
     color: #fff;
   }
   #marker {
-    margin-top: 20px;
+    margin-top: 10px;
   }
   #triangle {
     color: #F00;
@@ -453,6 +453,7 @@
     <h1>Samaritan // Réglages</h1>
     <p id="modelName"></p>
     <button id="reloadBtn">Recharger le modèle</button>
+    <button id="resetSafeBtn">Réinitialiser le mode allégé</button>
     <button id="logBtn">Afficher le journal</button>
     <div id="logView"></div>
     <button id="copyLogBtn" style="display:none">Copier le journal</button>
@@ -478,26 +479,14 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
 (() => {
   "use strict";
-
-  // ---------- CONFIG ----------
-  // Version GitHub Pages : modèle servi depuis le CDN Hugging Face (huggingface.co)
-  // et mis en cache dans le navigateur via la Cache API (persistant entre les visites).
-  // Le dossier local models/ (ONNX ~460 Mo) dépasse la limite GitHub de 100 Mo/fichier
-  // et ne peut donc pas être déployé : le premier chargement télécharge le modèle,
-  // les suivants sont servis depuis le cache.
   env.allowLocalModels = false;
   env.useBrowserCache = true;
   env.useFSCache = false;
   env.useCustomCache = false;
   const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
-  // navigator.deviceMemory n'est exposé que par Chrome/Android (pas Safari/iOS) ;
-  // on l'utilise en signal complémentaire, jamais comme seule condition.
   const LOW_MEM = !!(navigator.deviceMemory && navigator.deviceMemory <= 4);
   if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
-    // Sur mobile (ou mémoire faible), un seul thread WASM : le multi-thread expose
-    // certains navigateurs mobiles à des pics mémoire supplémentaires (buffers par
-    // thread) qui augmentent le risque de jetsam pendant le chargement.
     env.backends.onnx.wasm.numThreads = (IS_MOBILE || LOW_MEM)
       ? 1
       : Math.min(4, navigator.hardwareConcurrency || 1);
@@ -505,35 +494,15 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   const QWEN     = "onnx-community/Qwen2.5-0.5B-Instruct-ONNX";
   const SMOL_360 = "onnx-community/SmolLM2-360M-Instruct-ONNX";
   const SMOL_135 = "onnx-community/SmolLM2-135M-Instruct-ONNX";
-
-  // On tente désormais les "vrais" modèles sur mobile aussi (Qwen 0.5B / SmolLM 360M),
-  // grâce à la quantification q4 (poids int4) qui réduit fortement l'empreinte mémoire
-  // par rapport à q8. Le 135M reste en toute fin de chaîne, comme dernier recours.
   let MODEL_CHAIN = (IS_MOBILE || LOW_MEM)
     ? [QWEN, SMOL_360, SMOL_135]
     : [QWEN, SMOL_360, SMOL_135];
-
-  // dtype : on essaie "q4" en priorité (poids int4, activations déquantifiées à la
-  // volée via l'op MatMulNBits — supporté par le backend WASM d'onnxruntime-web dans
-  // les versions récentes embarquées par transformers@3.5.1), puis on retombe sur
-  // "q8" (int8) si "q4" n'existe pas pour ce repo ou échoue à l'exécution.
-  // IMPORTANT : ne JAMAIS utiliser "q4f16"/"fp16" — ces variantes embarquent des
-  // tensors float16 que le backend WASM n'exécute PAS -> "OrtRun ERROR Unexpected
-  // input data type. actual tensor(float16), expected tensor(float)" en pleine
-  // génération. q4 (sans f16) et q8 n'ont pas ce problème.
   const DTYPE_CHAIN = ["q4", "q8"];
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS   = 30;
   const MOBILE_MAX_NEW_TOKENS = 20;
   const WORD_DELAY_MS = 300;
   const FADE_MS       = 120;
-
-  // ---------- ANTI-RELOAD (jetsam iOS/Android) ----------
-  // Le "reload" en fin de chargement = le navigateur tue l'onglet quand le heap WASM
-  // dépasse la limite RAM de l'appareil (pas un bug du code). On mémorise donc si un
-  // chargement est allé au bout : au boot suivant, un chargement encore marqué "en
-  // cours" dans localStorage signifie un crash/reload -> on repart sur un modèle plus
-  // léger (mode allégé) au lieu de re-boucler à l'infini.
   const LRUN   = "sm_load_running";
   const LCRASH = "sm_crash_count";
   const LLOG   = "sm_crash_lastlog";
@@ -1166,7 +1135,12 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
       if (!loadedModel) throw lastErr;
       modelReady = true;
       currentDtype = loadedDtype;
-      try { localStorage.removeItem(LRUN); } catch (e) {}
+      try {
+        localStorage.removeItem(LRUN);
+        // Un chargement réussi efface l'historique de crash : le mode allégé ne doit
+        // être qu'une protection temporaire, pas un état permanent après coup.
+        localStorage.removeItem(LCRASH);
+      } catch (e) {}
       modelNameEl.textContent = loadedModel.split("/").pop() + " (" + loadedDtype + ")";
       logDev("info", ["[load] ok=" + loadedModel + " dtype=" + loadedDtype]);
       cancelProgress();
@@ -1300,6 +1274,20 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   document.getElementById("reloadBtn").addEventListener("click", (e) => {
     e.stopPropagation();
     closePanel();
+    if (!isBusy) loadModel();
+  });
+
+  document.getElementById("resetSafeBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    closePanel();
+    try {
+      localStorage.removeItem(LRUN);
+      localStorage.removeItem(LCRASH);
+      localStorage.removeItem(LLOG);
+    } catch (err) {}
+    devLog.length = 0;
+    safeChainActive = false;
+    flashStatus("mode allégé réinitialisé");
     if (!isBusy) loadModel();
   });
 
