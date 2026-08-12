@@ -86,8 +86,8 @@
   #main p.hidden {
     color: #fff;
   }
-  #marker {
-    margin-top: 20px;
+  #marker
+    margin-top: 5px;
   }
   #triangle {
     color: #F00;
@@ -1079,8 +1079,12 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
   // WebGPU est instable sur certaines machines Windows (échec d'allocation GPU Dawn
   // -> "Failed to allocate memory to map ErrorBuffer" / instance GPU invalidée).
-  // WASM est fiable partout ; passer à true uniquement si le WebGPU de la machine est OK.
+  // WASM est fiable partout ; sur desktop on reste prudent (false par défaut).
+  // Sur mobile en revanche, WebGPU garde les poids côté GPU au lieu du heap WASM du
+  // navigateur, ce qui réduit fortement le risque de jetsam — on le tente donc en
+  // priorité, avec repli automatique sur WASM si webgpu échoue ou n'est pas dispo.
   const USE_WEBGPU = false;
+  const USE_WEBGPU_MOBILE = true;
 
   let progressFrame = null;
   function cancelProgress() {
@@ -1147,10 +1151,11 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     logDev("info", ["[load] chain=" + modelChain.join(" / ") + " dtypes=" + dtypeChain.join(",") + (safeChainActive ? " (mode allégé)" : "")]);
     if (safeChainActive) flashStatus("modèle instable détecté : chargement allégé");
 
-    const devices = (USE_WEBGPU && navigator.gpu) ? ["webgpu", "wasm"] : ["wasm"];
+    const devices = ((USE_WEBGPU || (IS_MOBILE && USE_WEBGPU_MOBILE)) && navigator.gpu) ? ["webgpu", "wasm"] : ["wasm"];
     let lastErr = null;
     let loadedModel = null;
     let loadedDtype = null;
+    let loadedDevice = null;
     try {
       for (const modelId of modelChain) {
         for (const dtype of dtypeChain) {
@@ -1163,6 +1168,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
               });
               loadedModel = modelId;
               loadedDtype = dtype;
+              loadedDevice = device;
               break;
             } catch (e) {
               lastErr = e;
@@ -1191,8 +1197,8 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
         // être qu'une protection temporaire, pas un état permanent après coup.
         localStorage.removeItem(LCRASH);
       } catch (e) {}
-      modelNameEl.textContent = loadedModel.split("/").pop() + " (" + loadedDtype + ")";
-      logDev("info", ["[load] ok=" + loadedModel + " dtype=" + loadedDtype]);
+      modelNameEl.textContent = loadedModel.split("/").pop() + " (" + loadedDtype + ", " + loadedDevice + ")";
+      logDev("info", ["[load] ok=" + loadedModel + " dtype=" + loadedDtype + " device=" + loadedDevice]);
       cancelProgress();
       setLoaderProgress(100);
       await finishLoader(true);
@@ -1228,7 +1234,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
     try {
       const messages = [
-        { role: "system", content: "Tu es Samaritan, un assistant francophone. Réponds toujours intégralement en français, jamais en anglais. Sois concis et utile, en phrases courtes." },
+        { role: "system", content: "Réponds en français, en phrases courtes." },
         { role: "user", content: promptText }
       ];
 
