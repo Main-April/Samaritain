@@ -419,8 +419,8 @@
   const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
   const LANG = "fr-FR";
-  const WORD_DELAY_MS = 300;
-  const FADE_MS       = 120;
+  const WORD_DELAY_MS = 400;
+  const FADE_MS       = 150;
 
   modelNameEl_init();
   function modelNameEl_init() {}
@@ -730,7 +730,7 @@
   async function playFakeLoader() {
     bootLoader();
     // Barre de progression minutée sur ~2,2s, aucun lien avec un vrai téléchargement.
-    const DURATION_MS = 5000;
+    const DURATION_MS = Math.floor(Math.random()*10000);
     const STEPS = 40;
     for (let i = 0; i <= STEPS; i++) {
       setLoaderProgress((i / STEPS) * 100);
@@ -902,11 +902,11 @@
         body: JSON.stringify({
           model: GROQ_MODEL,
           messages: [
-            { role: "system", content: "Tu es Samaritain, un assistant français." },
+            { role: "system", content: "Tu es Samaritain, un assistant IA. Sois direct et clair" },
             { role: "user", content: promptText }
           ],
-          max_tokens: 120,
-          temperature: 0.6
+          max_tokens: 60,
+          temperature: 0.7
         })
       });
 
