@@ -201,6 +201,181 @@
   }
   .cursor-blink { animation: loaderBlink 1s steps(1) infinite; }
   @keyframes loaderBlink { 50% { opacity: 0; } }
+
+  /* ---------- LOADER / BOOT (cosmétique uniquement, plus de chargement réel) ---------- */
+  #loader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: none;
+    background: #fafafa;
+    z-index: 1000;
+    overflow: hidden;
+  }
+  .loader-pane {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 50%;
+    background: #fff;
+    z-index: 3;
+    transition: width 1s cubic-bezier(0.77, 0, 0.18, 1);
+  }
+  #loader-left  { left: 0; border-right: 2px solid #000; }
+  #loader-right { right: 0; border-left: 2px solid #000; }
+  #loader.open  .loader-pane { width: 13%; }
+  #loader.done  #loader-left  { transform: translateX(-100vw); }
+  #loader.done  #loader-right { transform: translateX(100vw); }
+  #loader.done  .loader-pane {
+    border-color: transparent;
+    transition: transform 1s cubic-bezier(0.77, 0, 0.18, 1), border-color 0.3s ease 0.5s;
+  }
+  #loader-left::after,
+  #loader-right::after {
+    content: "";
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: #000;
+    z-index: 4;
+    box-shadow:
+      0 24vh 0 0 #000,
+      0 48vh 0 0 #000,
+      0 72vh 0 0 #000;
+  }
+  #loader-left::after  { top: 12vh; right: -10px; }
+  #loader-right::after { top: 12vh; left: -10px; }
+  .loader-pane .cnr {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    z-index: 4;
+  }
+  #loader-left .cnr.t  { top: 14px;    right: 12px;  border-top: 2px solid #000;    border-right: 2px solid #000; }
+  #loader-left .cnr.b  { bottom: 14px; right: 12px;  border-bottom: 2px solid #000; border-right: 2px solid #000; }
+  #loader-right .cnr.t { top: 14px;    left: 12px;   border-top: 2px solid #000;    border-left: 2px solid #000; }
+  #loader-right .cnr.b { bottom: 14px; left: 12px;   border-bottom: 2px solid #000; border-left: 2px solid #000; }
+  #loader-center {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  #boot-log {
+    position: absolute;
+    top: max(12px, env(safe-area-inset-top, 0px));
+    left: calc(13% + 12px);
+    right: calc(50% + min(35vw, 230px) + 36px);
+    width: auto;
+    height: 72%;
+    max-height: 72%;
+    font-size: clamp(0.45em, 2.2vw, 0.6em);
+    line-height: 1.7;
+    color: #b0b0b0;
+    text-align: left;
+    overflow: hidden;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+  }
+  @media (max-width: 820px) {
+    #boot-log {
+      left: calc(13% + 10px);
+      right: calc(13% + 10px);
+      top: 6px;
+      height: 38%;
+      max-height: 38%;
+      font-size: clamp(0.32em, 1.8vw, 0.42em);
+    }
+  }
+  #boot-log .boot-line { display: block; animation: logLineIn 0.2s ease; }
+  #boot-log .boot-text { display: inline; }
+  #boot-log .boot-cursor {
+    display: inline-block;
+    width: 0.55em;
+    height: 1.05em;
+    background: #000;
+    vertical-align: text-bottom;
+    margin-left: 2px;
+    animation: cursorBlink 1s steps(1) infinite;
+  }
+  @keyframes logLineIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes cursorBlink { 50% { opacity: 0; } }
+  #loader.open #boot-log { animation: logFadeIn 0.6s ease 0.2s forwards; }
+  @keyframes logFadeIn { from { opacity: 0; } to { opacity: 1; } }
+  #loading-pane-container { text-align: center; opacity: 0; }
+  #loader.open #loading-pane-container { animation: pulseIn 0.7s ease 0.35s forwards; }
+  @keyframes pulseIn {
+    0%   { opacity: 0; }
+    30%  { opacity: 0.85; }
+    45%  { opacity: 0.05; }
+    100% { opacity: 1; }
+  }
+  #loader.finishing #loading-pane-container,
+  #loader.finishing #boot-log { animation: paneFadeOut 0.8s ease forwards; }
+  @keyframes paneFadeOut { to { opacity: 0; } }
+  .invert {
+    display: inline-block;
+    background: #000;
+    color: #fff;
+    padding: 3px 8px;
+    letter-spacing: 0.2em;
+    font-size: clamp(0.5em, 2.5vw, 0.6em);
+  }
+  #loading-name {
+    font-size: clamp(0.7em, 3.5vw, 1.1em);
+    margin: 12px 0 10px;
+    color: #000;
+    min-height: 1.2em;
+  }
+  #loading-bar-container {
+    width: min(70%, 460px);
+    margin: 0 auto;
+    border: 2px solid #000;
+    padding: 2px;
+    height: 18px;
+    box-sizing: border-box;
+  }
+  #loading-bar {
+    position: relative;
+    background: #000;
+    height: 100%;
+    width: 0;
+    overflow: hidden;
+    transition: width 0.25s ease-out;
+  }
+  #loading-connected {
+    position: absolute;
+    top: 50%; left: 0;
+    width: 100%;
+    transform: translateY(-50%);
+    text-align: center;
+    opacity: 0;
+    pointer-events: none;
+  }
+  #loading-connected.show { opacity: 1; }
+  #loading-connected.hide { opacity: 0; }
+  #loading-connected .label {
+    display: inline-block;
+    background: #000;
+    color: #fff;
+    font-family: "magdacleanmono", "Courier New", monospace;
+    font-size: clamp(1.2em, 6vw, 2.4em);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 20px 40px;
+    max-width: min(82vw, 560px);
+    border: 2px solid #000;
+  }
+  #loading-connected.show .label { animation: labelIn 0.5s ease; }
+  #loading-connected.hide .label { animation: labelOut 0.5s ease forwards; }
+  #loading-connected.error .label { background: #F00; }
 </style>
 </head>
 <body>
@@ -218,16 +393,27 @@
     <button id="logBtn">Afficher le journal</button>
     <div id="logView"></div>
     <button id="copyLogBtn" style="display:none">Copier le journal</button>
+    <button id="replayLoaderBtn">Rejouer le chargement</button>
   </div>
   <div id="status"><div class="label"></div></div>
+
+  <div id="loader">
+    <div id="loader-center">
+      <div id="boot-log"></div>
+      <div id="loading-pane-container">
+        <div><span class="invert">loading <span class="cursor-blink">_</span></span></div>
+        <div id="loading-name">initialisation…</div>
+        <div id="loading-bar-container"><div id="loading-bar"></div></div>
+      </div>
+      <div id="loading-connected"><span id="loading-connected-text" class="label">connection established</span></div>
+    </div>
+    <div id="loader-left" class="loader-pane"><i class="cnr t"></i><i class="cnr b"></i></div>
+    <div id="loader-right" class="loader-pane"><i class="cnr t"></i><i class="cnr b"></i></div>
+  </div>
 
 <script>
 (() => {
   "use strict";
-
-  // ---------- CONFIG API ----------
-  // Clé en clair côté client (choix assumé) : n'importe qui inspectant la page peut
-  // la récupérer et l'utiliser à ta place / à tes frais. Remplace par ta vraie clé.
   const GROQ_API_KEY = "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";
   const GROQ_MODEL = "llama-3.1-8b-instant"; // rapide, largement au-dessus d'1B en qualité, tourne côté serveur Groq
   const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -238,8 +424,6 @@
 
   modelNameEl_init();
   function modelNameEl_init() {}
-
-  // ---------- JOURNAL ON-DEVICE (pas de console web sur mobile) ----------
   const devLog = [];
   function logDev(level, args) {
     try {
@@ -381,11 +565,180 @@
       await sleep(70);
     }
     await sleep(300);
-    setMode("");
-    setText("");
   }
 
-  // ---------- SPEECH TO TEXT ----------
+  // ---------- FAUX LOADER (cosmétique) ----------
+  // Ne charge plus rien de réel — c'est juste l'habillage visuel d'origine, rejoué
+  // sur une durée fixe minutée, sans lien avec un téléchargement ou un modèle.
+  const loaderEl        = document.getElementById("loader");
+  const bootLogEl       = document.getElementById("boot-log");
+  const loadingPaneEl   = document.getElementById("loading-pane-container");
+  const loadingNameEl   = document.getElementById("loading-name");
+  const loadingBarEl    = document.getElementById("loading-bar");
+  const connectedEl     = document.getElementById("loading-connected");
+  const connectedTextEl = document.getElementById("loading-connected-text");
+
+  const SYS_TOKENS = [
+    "x0.0/sirv", "+0.1/ecom", "[eth0]", "[eth1]",
+    "feed_1 [ ]", "feed_2 [ ]", "feed_3 [ ]", "feed_4 [ ]", "feed_5 [ ]",
+    "feed_6 [ ]", "feed_7 [ ]", "feed_8 [ ]", "feed_9 [ ]"
+  ];
+  const RESOURCE_SEGMENTS = [
+    "resources.comm.archive", "resources.im.users", "resources.im.log", "resources.rin-im",
+    "resources.email.users", "resources.email.data", "resources.voip",
+    "resources.dsn-messaging", "resources.dsn-subscribers", "resources.web.users",
+    "resources.web.content", "resources.video.feeds", "resources.video.archive",
+    "resources.video.streams", "resources.audio.calls", "resources.audio.voicemail",
+    "resources.files.shares", "resources.files.sync", "resources.ftp.mirrors",
+    "resources.irc.logs", "resources.irc.servers", "resources.net.dns",
+    "resources.net.http", "resources.net.tor", "resources.grid.compute",
+    "resources.grid.storage", "resources.telecom.fiber", "resources.telecom.sat",
+    "resources.telecom.gsm", "linking.databases.sigint", "linking.databases.sigint.xxx-",
+    "linking.databases.crime", "linking.databases.finance", "nodes.satellite.up-link",
+    "nodes.satellite.down-link", "nodes.relay.a-01", "nodes.relay.b-07", "nodes.relay.c-11",
+    "feeds.monitor.heartbeat", "feeds.monitor.alerts", "feeds.monitor.geo",
+    "security.keys", "security.access.log", "security.cameras", "security.intel"
+  ];
+
+  function randomResourceName() {
+    const seg = RESOURCE_SEGMENTS[Math.floor(Math.random() * RESOURCE_SEGMENTS.length)];
+    const r = Math.random();
+    if (r < 0.3) return seg + ".xxx-" + Math.floor(Math.random() * 1000);
+    if (r < 0.55) return seg + "." + Math.floor(100 + Math.random() * 900);
+    if (r < 0.7) return seg + "-" + String(Math.floor(Math.random() * 100)).padStart(2, "0");
+    return seg;
+  }
+  function randomBootLine() {
+    if (Math.random() < 0.3) return SYS_TOKENS[Math.floor(Math.random() * SYS_TOKENS.length)];
+    return randomResourceName();
+  }
+
+  let logLineCount = 0;
+  const STREAM_MAX_LINES = 60;
+  const TYPE_INTERVAL = 16;
+  let typeTimer = null;
+  let pendingText = "";
+  let activeLine = null;
+
+  function bootLinePrefix(idx) {
+    return "<b style=\"color:#F00\">[[</b>"
+      + (idx < 10 ? " x0" : "x") + idx
+      + (idx < 10 ? " " : "")
+      + "<b style=\"color:#F00\">]</b> ";
+  }
+  function appendBootLine(line) {
+    const span = document.createElement("span");
+    span.className = "boot-line";
+    span.innerHTML = bootLinePrefix(logLineCount++) + "<span class=\"boot-text\">" + line + "</span>";
+    bootLogEl.appendChild(span);
+    pruneBootLog();
+    bootLogEl.scrollTop = bootLogEl.scrollHeight;
+  }
+  function startBootLine() {
+    activeLine = document.createElement("span");
+    activeLine.className = "boot-line";
+    activeLine.innerHTML = bootLinePrefix(logLineCount++) + "<span class=\"boot-text\"></span>";
+    const cursor = bootLogEl.querySelector(".boot-cursor");
+    if (cursor) bootLogEl.insertBefore(activeLine, cursor);
+    else bootLogEl.appendChild(activeLine);
+    pendingText = randomBootLine();
+  }
+  function typeNextChar() {
+    if (!activeLine) startBootLine();
+    if (pendingText) {
+      const ch = pendingText.charAt(0);
+      pendingText = pendingText.slice(1);
+      const text = activeLine.querySelector(".boot-text");
+      if (text) text.textContent += ch;
+    } else {
+      activeLine = null;
+      startBootLine();
+    }
+    pruneBootLog();
+    bootLogEl.scrollTop = bootLogEl.scrollHeight;
+  }
+  function pruneBootLog() {
+    while (bootLogEl.querySelectorAll(".boot-line").length > STREAM_MAX_LINES) {
+      const first = bootLogEl.querySelector(".boot-line");
+      if (first) bootLogEl.removeChild(first);
+    }
+  }
+  function startResourceStream() {
+    stopResourceStream();
+    bootLogEl.innerHTML = "";
+    logLineCount = 0;
+    activeLine = null;
+    pendingText = "";
+    const cursor = document.createElement("span");
+    cursor.className = "boot-cursor";
+    bootLogEl.appendChild(cursor);
+    typeTimer = setInterval(typeNextChar, TYPE_INTERVAL);
+  }
+  function stopResourceStream() {
+    if (typeTimer) { clearInterval(typeTimer); typeTimer = null; }
+  }
+
+  let lastResPct = -1;
+  function bootLoader() {
+    stopResourceStream();
+    loaderEl.classList.remove("open", "done", "finishing");
+    bootLogEl.innerHTML = "";
+    logLineCount = 0;
+    lastResPct = -1;
+    loadingBarEl.style.width = "0%";
+    loadingNameEl.textContent = "initialisation…";
+    connectedEl.style.display = "none";
+    connectedEl.classList.remove("show", "hide");
+    loadingPaneEl.style.opacity = "";
+    loaderEl.style.display = "flex";
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => loaderEl.classList.add("open"));
+    });
+    startResourceStream();
+  }
+  function setLoaderProgress(pct) {
+    pct = Math.min(100, Math.max(0, pct));
+    loadingBarEl.style.width = pct + "%";
+    const bucket = Math.floor(pct / 4);
+    if (bucket !== lastResPct) {
+      lastResPct = bucket;
+      loadingNameEl.textContent = randomResourceName();
+    }
+  }
+  async function finishLoader() {
+    stopResourceStream();
+    const cursor = bootLogEl.querySelector(".boot-cursor");
+    if (cursor) cursor.remove();
+    for (let i = 0; i < 6; i++) appendBootLine(randomBootLine());
+    loadingBarEl.style.width = "100%";
+    loadingNameEl.textContent = randomResourceName();
+    loaderEl.classList.add("finishing");
+    connectedEl.style.display = "block";
+    connectedTextEl.textContent = "connection established";
+    connectedEl.classList.add("show");
+    await sleep(1400);
+    connectedEl.classList.remove("show");
+    connectedEl.classList.add("hide");
+    await sleep(500);
+    connectedEl.classList.remove("hide");
+    loaderEl.classList.add("done");
+    await sleep(1200);
+    loaderEl.style.display = "none";
+    loaderEl.classList.remove("open", "done");
+  }
+
+  async function playFakeLoader() {
+    bootLoader();
+    // Barre de progression minutée sur ~2,2s, aucun lien avec un vrai téléchargement.
+    const DURATION_MS = 2200;
+    const STEPS = 40;
+    for (let i = 0; i <= STEPS; i++) {
+      setLoaderProgress((i / STEPS) * 100);
+      await sleep(DURATION_MS / STEPS);
+    }
+    await finishLoader();
+  }
+
   function initRecognition() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -645,7 +998,22 @@
   });
 
   // ---------- INIT ----------
-  boot();
+  (async () => {
+    await playFakeLoader();
+    await boot();
+    setMode("");
+    setText("");
+  })();
+
+  document.getElementById("replayLoaderBtn").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    closePanel();
+    if (isBusy) return;
+    setText("");
+    await playFakeLoader();
+    setMode("");
+    setText("");
+  });
 })();
 </script>
 </body>
