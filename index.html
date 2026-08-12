@@ -87,7 +87,7 @@
     color: #fff;
   }
   #marker {
-    margin-top: 5px;
+    margin-top: 20px;
   }
   #triangle {
     color: #F00;
@@ -505,14 +505,19 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   }
   const QWEN     = "onnx-community/Qwen2.5-0.5B-Instruct-ONNX";
   const SMOL_360 = "onnx-community/SmolLM2-360M-Instruct-ONNX";
+  const GRANITE_350 = "onnx-community/granite-4.0-350m-ONNX-web"; // IBM Granite 4.0 Nano, instruct, multilingue (FR inclus)
   const SMOL_135 = "onnx-community/SmolLM2-135M-Instruct-ONNX";
 
   // On tente désormais les "vrais" modèles sur mobile aussi (Qwen 0.5B / SmolLM 360M),
   // grâce à la quantification q4 (poids int4) qui réduit fortement l'empreinte mémoire
-  // par rapport à q8. Le 135M reste en toute fin de chaîne, comme dernier recours.
+  // par rapport à q8. Granite 350M sert de palier intermédiaire avant le 135M, qui
+  // reste le dernier recours.
+  // Sur mobile (ou mémoire faible), on ne tente même plus Qwen 0.5B ni SmolLM 360M —
+  // trop lourds, ils ne font que retarder l'arrivée au modèle qui marche vraiment.
+  // On va direct sur Granite 350M en q4, avec le 135M en tout dernier filet de sécurité.
   let MODEL_CHAIN = (IS_MOBILE || LOW_MEM)
-    ? [QWEN, SMOL_360, SMOL_135]
-    : [QWEN, SMOL_360, SMOL_135];
+    ? [GRANITE_350, SMOL_135]
+    : [QWEN, SMOL_360, GRANITE_350, SMOL_135];
 
   // dtype : on essaie "q4" en priorité (poids int4, activations déquantifiées à la
   // volée via l'op MatMulNBits — supporté par le backend WASM d'onnxruntime-web dans
@@ -1127,9 +1132,11 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
         // risque de re-crash. On garde toujours q4 en premier essai.
         // Seul le nombre de modèles tentés se réduit avec les crashs répétés.
         if (n === 1) {
-          // 1er crash : on retire Qwen 0.5B de la chaîne (le plus gros), on garde
-          // SmolLM 360M en priorité avec q4 toujours en premier.
-          modelChain = [SMOL_360, SMOL_135];
+          // 1er crash : on retire tout ce qui est plus gros que Granite (déjà absent
+          // sur mobile), q4 reste toujours tenté en premier.
+          modelChain = MODEL_CHAIN.includes(GRANITE_350)
+            ? [GRANITE_350, SMOL_135]
+            : [SMOL_360, GRANITE_350, SMOL_135];
         } else {
           safeChainActive = true;
           modelChain = [SMOL_135];
