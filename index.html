@@ -479,21 +479,12 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
 (() => {
   "use strict";
-
-  // ---------- CONFIG ----------
-  // Version GitHub Pages : modèle servi depuis le CDN Hugging Face (huggingface.co)
-  // et mis en cache dans le navigateur via la Cache API (persistant entre les visites).
-  // Le dossier local models/ (ONNX ~460 Mo) dépasse la limite GitHub de 100 Mo/fichier
-  // et ne peut donc pas être déployé : le premier chargement télécharge le modèle,
-  // les suivants sont servis depuis le cache.
   env.allowLocalModels = false;
   env.useBrowserCache = true;
   env.useFSCache = false;
   env.useCustomCache = false;
   const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
-  // navigator.deviceMemory n'est exposé que par Chrome/Android (pas Safari/iOS) ;
-  // on l'utilise en signal complémentaire, jamais comme seule condition.
   const LOW_MEM = !!(navigator.deviceMemory && navigator.deviceMemory <= 4);
   if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
     // Sur mobile (ou mémoire faible), un seul thread WASM : le multi-thread expose
@@ -507,26 +498,9 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   const SMOL_360 = "onnx-community/SmolLM2-360M-Instruct-ONNX";
   const GRANITE_350 = "onnx-community/granite-4.0-350m-ONNX-web"; // IBM Granite 4.0 Nano, instruct, multilingue (FR inclus)
   const SMOL_135 = "onnx-community/SmolLM2-135M-Instruct-ONNX";
-
-  // On tente désormais les "vrais" modèles sur mobile aussi (Qwen 0.5B / SmolLM 360M),
-  // grâce à la quantification q4 (poids int4) qui réduit fortement l'empreinte mémoire
-  // par rapport à q8. Granite 350M sert de palier intermédiaire avant le 135M, qui
-  // reste le dernier recours.
-  // Sur mobile (ou mémoire faible), on ne tente même plus Qwen 0.5B ni SmolLM 360M —
-  // trop lourds, ils ne font que retarder l'arrivée au modèle qui marche vraiment.
-  // On va direct sur Granite 350M en q4, avec le 135M en tout dernier filet de sécurité.
   let MODEL_CHAIN = (IS_MOBILE || LOW_MEM)
     ? [GRANITE_350, SMOL_135]
     : [QWEN, SMOL_360, GRANITE_350, SMOL_135];
-
-  // dtype : on essaie "q4" en priorité (poids int4, activations déquantifiées à la
-  // volée via l'op MatMulNBits — supporté par le backend WASM d'onnxruntime-web dans
-  // les versions récentes embarquées par transformers@3.5.1), puis on retombe sur
-  // "q8" (int8) si "q4" n'existe pas pour ce repo ou échoue à l'exécution.
-  // IMPORTANT : ne JAMAIS utiliser "q4f16"/"fp16" — ces variantes embarquent des
-  // tensors float16 que le backend WASM n'exécute PAS -> "OrtRun ERROR Unexpected
-  // input data type. actual tensor(float16), expected tensor(float)" en pleine
-  // génération. q4 (sans f16) et q8 n'ont pas ce problème.
   const DTYPE_CHAIN = ["q4", "q8"];
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS   = 30;
@@ -708,10 +682,6 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
     rec.continuous = false;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
-
-    // iOS Safari peut rester "en écoute" indéfiniment sans finale résolu (ni onresult
-    // ni onend). On impose : fin au silence (~1,6 s) ou timeout absolu (~8 s), et on
-    // utilise les résultats intérimaires pour que la reconnaissance tourne jamais sans fin.
     const SILENCE_MS = 1600;
     const TOTAL_MS   = 8000;
     let silenceTimer = null;
@@ -1083,7 +1053,7 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   // Sur mobile en revanche, WebGPU garde les poids côté GPU au lieu du heap WASM du
   // navigateur, ce qui réduit fortement le risque de jetsam — on le tente donc en
   // priorité, avec repli automatique sur WASM si webgpu échoue ou n'est pas dispo.
-  const USE_WEBGPU = false;
+  const USE_WEBGPU = true;
   const USE_WEBGPU_MOBILE = true;
 
   let progressFrame = null;
