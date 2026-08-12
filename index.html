@@ -87,7 +87,7 @@
     color: #fff;
   }
   #marker {
-    margin-top: 10px;
+    margin-top: 20px;
   }
   #triangle {
     color: #F00;
@@ -489,24 +489,39 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   env.useBrowserCache = true;
   env.useFSCache = false;
   env.useCustomCache = false;
-  if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
-    env.backends.onnx.wasm.numThreads = Math.min(4, navigator.hardwareConcurrency || 1);
-  }
   const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
     || (typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1);
+  // navigator.deviceMemory n'est exposé que par Chrome/Android (pas Safari/iOS) ;
+  // on l'utilise en signal complémentaire, jamais comme seule condition.
+  const LOW_MEM = !!(navigator.deviceMemory && navigator.deviceMemory <= 4);
+  if (typeof SharedArrayBuffer !== "undefined" && env.backends && env.backends.onnx) {
+    // Sur mobile (ou mémoire faible), un seul thread WASM : le multi-thread expose
+    // certains navigateurs mobiles à des pics mémoire supplémentaires (buffers par
+    // thread) qui augmentent le risque de jetsam pendant le chargement.
+    env.backends.onnx.wasm.numThreads = (IS_MOBILE || LOW_MEM)
+      ? 1
+      : Math.min(4, navigator.hardwareConcurrency || 1);
+  }
   const QWEN     = "onnx-community/Qwen2.5-0.5B-Instruct-ONNX";
   const SMOL_360 = "onnx-community/SmolLM2-360M-Instruct-ONNX";
   const SMOL_135 = "onnx-community/SmolLM2-135M-Instruct-ONNX";
 
-  let MODEL_CHAIN = IS_MOBILE
-    ? [SMOL_360, SMOL_135]
+  // On tente désormais les "vrais" modèles sur mobile aussi (Qwen 0.5B / SmolLM 360M),
+  // grâce à la quantification q4 (poids int4) qui réduit fortement l'empreinte mémoire
+  // par rapport à q8. Le 135M reste en toute fin de chaîne, comme dernier recours.
+  let MODEL_CHAIN = (IS_MOBILE || LOW_MEM)
+    ? [QWEN, SMOL_360, SMOL_135]
     : [QWEN, SMOL_360, SMOL_135];
 
-  // dtype : "q8" (int8). Le "q4f16" embarque des tensors float16 que le backend WASM
-  // d'onnxruntime n'exécute PAS -> "OrtRun ERROR Unexpected input data type. actual
-  // tensor(float16), expected tensor(float)" en pleine génération. "q8" est le dtype
-  // par défaut conseillé pour WASM (aucun fp16) et fonctionne sur tous les navigateurs.
-  const DTYPE = "q8";
+  // dtype : on essaie "q4" en priorité (poids int4, activations déquantifiées à la
+  // volée via l'op MatMulNBits — supporté par le backend WASM d'onnxruntime-web dans
+  // les versions récentes embarquées par transformers@3.5.1), puis on retombe sur
+  // "q8" (int8) si "q4" n'existe pas pour ce repo ou échoue à l'exécution.
+  // IMPORTANT : ne JAMAIS utiliser "q4f16"/"fp16" — ces variantes embarquent des
+  // tensors float16 que le backend WASM n'exécute PAS -> "OrtRun ERROR Unexpected
+  // input data type. actual tensor(float16), expected tensor(float)" en pleine
+  // génération. q4 (sans f16) et q8 n'ont pas ce problème.
+  const DTYPE_CHAIN = ["q4", "q8"];
   const LANG         = "fr-FR";
   const MAX_NEW_TOKENS   = 30;
   const MOBILE_MAX_NEW_TOKENS = 20;
@@ -572,8 +587,9 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
   let audioPrimed = false;
   let retryIndex = 0;
   const RETRY_DELAYS = [300, 1000, 2000, 3500];
+  let currentDtype = DTYPE_CHAIN[0];
 
-  modelNameEl.textContent = MODEL_CHAIN[0].split("/").pop() + " (" + DTYPE + ")";
+  modelNameEl.textContent = MODEL_CHAIN[0].split("/").pop() + " (" + currentDtype + ")";
 
   // ---------- AFFICHAGE ----------
   function measureTextWidth(text) {
@@ -1096,6 +1112,8 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
 
     // Détection de reload : si LRUN est déjà présent, le chargement précédent n'est pas
     // allé au bout (crash/jetsam pendant l'allocation WASM). On passe en mode allégé.
+    let modelChain = MODEL_CHAIN;
+    let dtypeChain = DTYPE_CHAIN;
     try {
       if (localStorage.getItem(LRUN)) {
         const n = (parseInt(localStorage.getItem(LCRASH) || "0", 10) || 0) + 1;
@@ -1103,42 +1121,54 @@ import { env, pipeline, TextStreamer } from "https://cdn.jsdelivr.net/npm/@huggi
         let prev = "";
         try { prev = localStorage.getItem(LLOG) || ""; } catch (e2) {}
         console.warn("[load] chargement précédent interrompu (crash n°" + n + ")" + (prev ? " | dernier log : " + prev : ""));
-        if (n >= 1) {
+        // 1er crash : on retire "q4" (peut peser plus en pic mémoire pendant la
+        // déquantification que prévu sur cet appareil) et on force q8 direct.
+        // 2e crash ou plus : mode allégé, on tombe directement sur le 135M en q8.
+        if (n === 1) {
+          dtypeChain = ["q8"];
+        } else {
           safeChainActive = true;
-          MODEL_CHAIN = IS_MOBILE ? [SMOL_135] : [QWEN, SMOL_135];
+          modelChain = [SMOL_135];
+          dtypeChain = ["q8"];
         }
       }
       localStorage.setItem(LRUN, String(Date.now()));
     } catch (e) {}
-    logDev("info", ["[load] chain=" + MODEL_CHAIN.join(" / ") + (safeChainActive ? " (mode allégé)" : "")]);
+    logDev("info", ["[load] chain=" + modelChain.join(" / ") + " dtypes=" + dtypeChain.join(",") + (safeChainActive ? " (mode allégé)" : "")]);
     if (safeChainActive) flashStatus("modèle instable détecté : chargement allégé");
 
     const devices = (USE_WEBGPU && navigator.gpu) ? ["webgpu", "wasm"] : ["wasm"];
     let lastErr = null;
     let loadedModel = null;
+    let loadedDtype = null;
     try {
-      for (const modelId of MODEL_CHAIN) {
-        for (const device of devices) {
-          try {
-            generator = await pipeline("text-generation", modelId, {
-              dtype: DTYPE,
-              device,
-              progress_callback: handleProgress
-            });
-            loadedModel = modelId;
-            break;
-          } catch (e) {
-            lastErr = e;
-            console.warn("[load] échec de " + modelId + " sur " + device + " :", e);
+      for (const modelId of modelChain) {
+        for (const dtype of dtypeChain) {
+          for (const device of devices) {
+            try {
+              generator = await pipeline("text-generation", modelId, {
+                dtype,
+                device,
+                progress_callback: handleProgress
+              });
+              loadedModel = modelId;
+              loadedDtype = dtype;
+              break;
+            } catch (e) {
+              lastErr = e;
+              console.warn("[load] échec de " + modelId + " (" + dtype + ") sur " + device + " :", e);
+            }
           }
+          if (loadedModel) break;
         }
         if (loadedModel) break;
       }
       if (!loadedModel) throw lastErr;
       modelReady = true;
+      currentDtype = loadedDtype;
       try { localStorage.removeItem(LRUN); } catch (e) {}
-      modelNameEl.textContent = loadedModel.split("/").pop() + " (" + DTYPE + ")";
-      logDev("info", ["[load] ok=" + loadedModel]);
+      modelNameEl.textContent = loadedModel.split("/").pop() + " (" + loadedDtype + ")";
+      logDev("info", ["[load] ok=" + loadedModel + " dtype=" + loadedDtype]);
       cancelProgress();
       setLoaderProgress(100);
       await finishLoader(true);
