@@ -902,7 +902,7 @@
         body: JSON.stringify({
           model: GROQ_MODEL,
           messages: [
-            { role: "system", content: "Tu es Samaritain, un assistant IA. Sois direct et clair" },
+            { role: "system", content: "Tu es Samaritain, une IA. Tu dois répondre le plus directement et clairement possible, en une phrase maximum, sujet verbe complément." },
             { role: "user", content: promptText }
           ],
           max_tokens: 60,
